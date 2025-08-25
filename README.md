@@ -1,5 +1,6 @@
 # darkurlscan
 黑链扫描器-支持自定义威胁情报接口调用-自定义规则，python3启动 带gui和命令行
+gui界面是粉色的 命令行是正常的
 rules自己去定义
 使用之前先保证pip是最新的 
 url可以通过url_check工具去检查是否具有合法性和ping通
