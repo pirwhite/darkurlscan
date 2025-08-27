@@ -8,6 +8,7 @@ import signal
 import shutil
 import subprocess
 import time
+import socket
 from difflib import Differ, SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -116,11 +117,10 @@ def print_darkscan_banner():
                    /  /               \\  \\
                   /  /                 \\  \\
                  /  /                   \\  \\
-                /  /                     \\  \\
 +-----------------------------------------------------------+
 |                      DarkScan Tool                        |
 |                     Author: p1r07                        |
-|     支持自动补全协议+同时探活+篡改检测(父链接和子链接)      |
+| 支持自动补全协议+同时探活+篡改检测+IP解析及属地查询        |
 +-----------------------------------------------------------+
     {Color.RESET}"""
     print(banner)
@@ -277,7 +277,8 @@ def save_scan_results(results, base_filename="scan_results"):
             "检测时间", "父级URL", "原始URL", "HTTP状态", "HTTPS状态", 
             "有效URL", "链接类型", "原始链接", "绝对链接", "HTTP状态码", 
             "递归深度", "URL规则匹配项", "内容规则匹配项", "标签文本内容", 
-            "是否匹配URL规则", "是否匹配内容规则", "是否恶意", "威胁情报详情"
+            "是否匹配URL规则", "是否匹配内容规则", "是否恶意", "威胁情报详情",
+            "IP地址", "IP属地(国家)", "IP属地(地区)", "IP属地(城市)", "IP服务商"
         ]
         
         # 使用临时文件先写入，完成后再重命名，确保文件完整性
@@ -326,6 +327,16 @@ def save_scan_results(results, base_filename="scan_results"):
                             row_data[field] = "是" if result.get("is_malicious", False) else "否"
                         elif field == "威胁情报详情":
                             row_data[field] = "\n".join(result.get("threat_info", []))
+                        elif field == "IP地址":
+                            row_data[field] = ", ".join(result.get("ip_addresses", []))
+                        elif field == "IP属地(国家)":
+                            row_data[field] = result.get("ip_country", "")
+                        elif field == "IP属地(地区)":
+                            row_data[field] = result.get("ip_region", "")
+                        elif field == "IP属地(城市)":
+                            row_data[field] = result.get("ip_city", "")
+                        elif field == "IP服务商":
+                            row_data[field] = result.get("ip_isp", "")
                         else:
                             row_data[field] = ""
                     
@@ -386,7 +397,7 @@ def save_scan_results(results, base_filename="scan_results"):
         try:
             simple_path = os.path.join(os.getcwd(), f"scan_results_{int(time.time())}.csv")
             with open(simple_path, 'w', encoding='utf-8') as f:
-                f.write("检测时间,父级URL,原始URL,HTTP状态,HTTPS状态,有效URL,是否恶意\n")
+                f.write("检测时间,父级URL,原始URL,HTTP状态,HTTPS状态,有效URL,是否恶意,IP地址,IP属地(国家)\n")
             print(f"{Color.YELLOW}紧急保存: 结果文件已创建至 {simple_path}{Color.RESET}")
             return simple_path
         except:
@@ -409,7 +420,8 @@ def save_tamper_results(results, base_filename="tamper_results"):
         fieldnames = [
             "检测时间", "原始URL", "HTTP状态", "HTTPS状态", "有效URL",
             "URL", "链接类型", "基准内容时间", "内容相似度", "差异大小",
-            "差异比例(%)", "是否判定为篡改", "篡改类型", "主要差异描述"
+            "差异比例(%)", "是否判定为篡改", "篡改类型", "主要差异描述",
+            "IP地址", "IP属地(国家)", "IP属地(地区)", "IP属地(城市)", "IP服务商"
         ]
         
         # 使用临时文件先写入，完成后再重命名
@@ -434,7 +446,12 @@ def save_tamper_results(results, base_filename="tamper_results"):
                         "差异比例(%)": f"{result.get('diff_percentage', 0):.2f}",
                         "是否判定为篡改": "是" if result.get("is_tampered", False) else "否",
                         "篡改类型": result.get("tamper_type", ""),
-                        "主要差异描述": result.get("diff_description", "")
+                        "主要差异描述": result.get("diff_description", ""),
+                        "IP地址": ", ".join(result.get("ip_addresses", [])),
+                        "IP属地(国家)": result.get("ip_country", ""),
+                        "IP属地(地区)": result.get("ip_region", ""),
+                        "IP属地(城市)": result.get("ip_city", ""),
+                        "IP服务商": result.get("ip_isp", "")
                     }
                     
                     # 处理可能的特殊字符
@@ -491,7 +508,7 @@ def save_tamper_results(results, base_filename="tamper_results"):
         try:
             simple_path = os.path.join(os.getcwd(), f"tamper_results_{int(time.time())}.csv")
             with open(simple_path, 'w', encoding='utf-8') as f:
-                f.write("检测时间,原始URL,HTTP状态,HTTPS状态,有效URL,URL,链接类型,是否判定为篡改\n")
+                f.write("检测时间,原始URL,HTTP状态,HTTPS状态,有效URL,URL,链接类型,是否判定为篡改,IP地址,IP属地(国家)\n")
             print(f"{Color.YELLOW}紧急保存: 结果文件已创建至 {simple_path}{Color.RESET}")
             return simple_path
         except:
@@ -521,6 +538,32 @@ def log(message, url=None, level="info"):
             print(f"{level_color}[{timestamp}] [{display_url}] {message}{Color.RESET}")
         else:
             print(f"{level_color}[{timestamp}] {message}{Color.RESET}")
+
+def get_ip_addresses(hostname):
+    """获取主机名对应的IP地址列表"""
+    try:
+        _, _, ip_addresses = socket.gethostbyname_ex(hostname)
+        return list(set(ip_addresses))  # 去重
+    except Exception as e:
+        log(f"解析IP地址失败: {str(e)}", hostname, "error")
+        return []
+
+def get_ip_location(ip):
+    """获取IP地址的属地信息，使用ip-api.com"""
+    try:
+        response = requests.get(f"http://ip-api.com/json/{ip}", timeout=10)
+        data = response.json()
+        if data.get("status") == "success":
+            return {
+                "country": data.get("country", ""),
+                "region": data.get("regionName", ""),
+                "city": data.get("city", ""),
+                "isp": data.get("isp", "")
+            }
+        return {"country": "", "region": "", "city": "", "isp": ""}
+    except Exception as e:
+        log(f"获取IP属地失败: {str(e)}", ip, "error")
+        return {"country": "", "region": "", "city": "", "isp": ""}
 
 def load_config():
     """加载配置文件"""
@@ -556,12 +599,10 @@ def load_config():
 def save_config(config):
     """保存配置到文件"""
     try:
-        # 先声明global再使用和修改变量
-        global CONFIG_PATH
-        
         # 检查目录
         if not ensure_directory_exists(CONFIG_PATH):
             print(f"{Color.YELLOW}配置文件目录不可写，尝试保存到用户主目录{Color.RESET}")
+          #  global CONFIG_PATH
             CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".darkscan_config.json")
             
         with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
@@ -678,15 +719,38 @@ def get_page_content(url, timeout=15):
             return None
 
 def complete_and_check_url(url, timeout=15):
-    """补全URL的协议并同时探测http和https的存活情况"""
+    """补全URL的协议并同时探测http和https的存活情况，增加IP解析和属地信息"""
     results = {
         'original_url': url,
         'http': None,
         'https': None,
         'best_url': None,
         'http_status': '未尝试',
-        'https_status': '未尝试'
+        'https_status': '未尝试',
+        'ip_addresses': [],
+        'ip_country': '',
+        'ip_region': '',
+        'ip_city': '',
+        'ip_isp': ''
     }
+    
+    # 提取主机名用于解析IP
+    parsed_url = urlparse(url)
+    hostname = parsed_url.netloc or url  # 如果没有netloc，使用原始url作为主机名
+    
+    # 解析IP地址
+    results['ip_addresses'] = get_ip_addresses(hostname)
+    
+    # 获取每个IP的属地信息，取第一个有效的IP属地
+    if results['ip_addresses']:
+        for ip in results['ip_addresses']:
+            location = get_ip_location(ip)
+            if location['country']:  # 如果获取到了国家信息，就使用这个IP的属地
+                results['ip_country'] = location['country']
+                results['ip_region'] = location['region']
+                results['ip_city'] = location['city']
+                results['ip_isp'] = location['isp']
+                break
     
     # 检查URL是否已经包含协议
     if not url.startswith(('http://', 'https://')):
@@ -916,7 +980,12 @@ def analyze_child_link(link_info, parent_url, depth, max_depth, rules, config, p
                 link_type=f"子链接(深度:{depth})",
                 original_url=link_info["absolute_link"],
                 http_status=url_check['http_status'],
-                https_status=url_check['https_status']
+                https_status=url_check['https_status'],
+                ip_addresses=url_check['ip_addresses'],
+                ip_country=url_check['ip_country'],
+                ip_region=url_check['ip_region'],
+                ip_city=url_check['ip_city'],
+                ip_isp=url_check['ip_isp']
             )
             if tamper_result:
                 with state_lock:
@@ -949,7 +1018,12 @@ def analyze_child_link(link_info, parent_url, depth, max_depth, rules, config, p
             "is_rule_match": is_rule_match,
             "is_content_match": is_content_match,
             "is_malicious": is_malicious,
-            "threat_info": threat_info
+            "threat_info": threat_info,
+            "ip_addresses": url_check['ip_addresses'],
+            "ip_country": url_check['ip_country'],
+            "ip_region": url_check['ip_region'],
+            "ip_city": url_check['ip_city'],
+            "ip_isp": url_check['ip_isp']
         }
         
         results = [result]
@@ -1084,8 +1158,10 @@ def compare_html(base_content, current_content, config):
         "removed_lines": len(removed)
     }
 
-def detect_tampering(url, current_content, config, link_type="父链接", original_url=None, http_status=None, https_status=None):
-    """检测单个URL是否被篡改，支持标记链接类型和协议状态"""
+def detect_tampering(url, current_content, config, link_type="父链接", original_url=None, 
+                   http_status=None, https_status=None, ip_addresses=None, 
+                   ip_country=None, ip_region=None, ip_city=None, ip_isp=None):
+    """检测单个URL是否被篡改，支持标记链接类型和协议状态，包含IP信息"""
     # 获取基准内容
     parsed_url = urlparse(url)
     filename = f"{parsed_url.netloc.replace(':', '_')}_{hash(url)}.html"  # 使用哈希确保唯一性
@@ -1116,13 +1192,23 @@ def detect_tampering(url, current_content, config, link_type="父链接", origin
         current_content = page_data["content"]
         status_code = page_data.get("status_code", "未知")
         
-        # 如果未提供，使用检测到的状态
+        # 如果未提供，使用检测到的状态和IP信息
         if http_status is None:
             http_status = url_check['http_status']
         if https_status is None:
             https_status = url_check['https_status']
         if original_url is None:
             original_url = url
+        if ip_addresses is None:
+            ip_addresses = url_check['ip_addresses']
+        if ip_country is None:
+            ip_country = url_check['ip_country']
+        if ip_region is None:
+            ip_region = url_check['ip_region']
+        if ip_city is None:
+            ip_city = url_check['ip_city']
+        if ip_isp is None:
+            ip_isp = url_check['ip_isp']
     else:
         status_code = "已获取"
     
@@ -1145,7 +1231,12 @@ def detect_tampering(url, current_content, config, link_type="父链接", origin
         "is_tampered": comparison["is_tampered"],
         "tamper_type": comparison["tamper_type"],
         "diff_description": comparison["diff_description"],
-        "status_code": status_code
+        "status_code": status_code,
+        "ip_addresses": ip_addresses or [],
+        "ip_country": ip_country or "",
+        "ip_region": ip_region or "",
+        "ip_city": ip_city or "",
+        "ip_isp": ip_isp or ""
     }
     
     # 根据结果类型使用不同颜色的日志
@@ -1289,7 +1380,12 @@ def process_tamper_parent_url(url, config):
             "is_tampered": False,
             "tamper_type": "无法访问",
             "diff_description": "URL无法访问，无法进行篡改检测",
-            "status_code": "无法访问"
+            "status_code": "无法访问",
+            "ip_addresses": url_check['ip_addresses'],
+            "ip_country": url_check['ip_country'],
+            "ip_region": url_check['ip_region'],
+            "ip_city": url_check['ip_city'],
+            "ip_isp": url_check['ip_isp']
         }
     
     # 检测篡改
@@ -1300,7 +1396,12 @@ def process_tamper_parent_url(url, config):
         link_type="父链接",
         original_url=url,
         http_status=url_check['http_status'],
-        https_status=url_check['https_status']
+        https_status=url_check['https_status'],
+        ip_addresses=url_check['ip_addresses'],
+        ip_country=url_check['ip_country'],
+        ip_region=url_check['ip_region'],
+        ip_city=url_check['ip_city'],
+        ip_isp=url_check['ip_isp']
     )
     
     return tamper_result
@@ -1358,7 +1459,12 @@ def detect_child_tampering(parent_url, config):
                 "is_tampered": False,
                 "tamper_type": "无法访问",
                 "diff_description": "子链接无法访问，无法进行篡改检测",
-                "status_code": "无法访问"
+                "status_code": "无法访问",
+                "ip_addresses": child_url_check['ip_addresses'],
+                "ip_country": child_url_check['ip_country'],
+                "ip_region": child_url_check['ip_region'],
+                "ip_city": child_url_check['ip_city'],
+                "ip_isp": child_url_check['ip_isp']
             })
             continue
             
@@ -1370,7 +1476,12 @@ def detect_child_tampering(parent_url, config):
             link_type=f"子链接({link['tag']})",
             original_url=link["absolute_link"],
             http_status=child_url_check['http_status'],
-            https_status=child_url_check['https_status']
+            https_status=child_url_check['https_status'],
+            ip_addresses=child_url_check['ip_addresses'],
+            ip_country=child_url_check['ip_country'],
+            ip_region=child_url_check['ip_region'],
+            ip_city=child_url_check['ip_city'],
+            ip_isp=child_url_check['ip_isp']
         )
         
         if tamper_result:
@@ -1412,7 +1523,12 @@ def run_single_scan(url, max_depth, rules, config, perform_tamper_check=False):
             "is_rule_match": False,
             "is_content_match": False,
             "is_malicious": False,
-            "threat_info": ["URL无法访问"]
+            "threat_info": ["URL无法访问"],
+            "ip_addresses": url_check['ip_addresses'],
+            "ip_country": url_check['ip_country'],
+            "ip_region": url_check['ip_region'],
+            "ip_city": url_check['ip_city'],
+            "ip_isp": url_check['ip_isp']
         }
         with state_lock:
             global_state["results"].append(result)
@@ -1432,7 +1548,12 @@ def run_single_scan(url, max_depth, rules, config, perform_tamper_check=False):
             link_type="父链接",
             original_url=url,
             http_status=url_check['http_status'],
-            https_status=url_check['https_status']
+            https_status=url_check['https_status'],
+            ip_addresses=url_check['ip_addresses'],
+            ip_country=url_check['ip_country'],
+            ip_region=url_check['ip_region'],
+            ip_city=url_check['ip_city'],
+            ip_isp=url_check['ip_isp']
         )
         if tamper_result:
             with state_lock:
@@ -1653,7 +1774,7 @@ def init_base_contents(urls, config, include_children=True):
                 # 验证写入成功
                 if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                     success_count += 1
-                    log(f"已保存基准内容 (HTTP: {url_check['http_status']}, HTTPS: {url_check['https_status']})", url, "success")
+                    log(f"已保存基准内容 (HTTP: {url_check['http_status']}, HTTPS: {url_check['https_status']}) IP: {', '.join(url_check['ip_addresses']) or '未知'}", url, "success")
                     
                     # 如果需要，同时保存一级子链接的基准内容
                     if include_children:
@@ -1683,7 +1804,7 @@ def init_base_contents(urls, config, include_children=True):
                                 
                                 if os.path.exists(child_file_path) and os.path.getsize(child_file_path) > 0:
                                     success_count += 1
-                                    log(f"已保存子链接基准内容 (HTTP: {child_url_check['http_status']}, HTTPS: {child_url_check['https_status']})", child_link["absolute_link"], "success")
+                                    log(f"已保存子链接基准内容 IP: {', '.join(child_url_check['ip_addresses']) or '未知'}", child_link["absolute_link"], "success")
                         except Exception as e:
                             log(f"处理子链接基准内容失败: {str(e)}", url, "warning")
             except Exception as e:
@@ -1747,14 +1868,14 @@ def view_scan_history():
                 with open(fpath, 'r', encoding='utf-8-sig') as f:
                     reader = csv.reader(f)
                     headers = next(reader)
-                    print(f"{Color.BOLD}{', '.join(headers[:5]) + '...'}{Color.RESET}")
+                    print(f"{Color.BOLD}{', '.join(headers[:8]) + '...'}{Color.RESET}")
                     
                     count = 0
                     for row in reader:
                         if count >= 5:
                             print("...")
                             break
-                        print(", ".join(row[:5]) + "...")
+                        print(", ".join(row[:8]) + "...")
                         count += 1
             except Exception as e:
                 print(f"{Color.RED}读取记录文件失败: {str(e)}{Color.RESET}")
@@ -1974,158 +2095,180 @@ def main():
                             if os.path.exists(base_path):
                                 has_base_content = True
                                 break
-                            
+                        
                     if not has_base_content:
-                        print(f"{Color.RED}未找到基准内容，请先执行选项3初始化基准内容{Color.RESET}")
-                        continue
+                        print(f"{Color.YELLOW}未找到基准内容，将先初始化基准内容再进行检测{Color.RESET}")
+                        init_base_contents(urls, config)
                         
                     run_tamper_detection(urls, config, include_children=True)
             
             elif choice == 5:
                 # 配置扫描参数
                 print(f"\n{Color.BOLD}===== 扫描参数配置 ====={Color.RESET}")
+                print(f"{Color.CYAN}当前配置:{Color.RESET}")
+                print(f"1. 线程数: {config['default_threads']}")
+                print(f"2. 超时时间(秒): {config['timeout']}")
+                print(f"3. 默认扫描深度: {config['max_depth']}")
+                print(f"4. 篡改检测相似度阈值: {config['tamper_sensitivity']}")
+                print(f"5. 显著变化阈值(字符): {config['significant_changes']}")
+                print(f"0. 返回")
+                
                 try:
-                    threads = input(f"{Color.YELLOW}请输入默认线程数 (当前: {config['default_threads']}): {Color.RESET}").strip()
-                    if threads:
-                        threads = int(threads)
-                        if threads > 0 and threads <= 20:
-                            config["default_threads"] = threads
+                    param_choice = input(f"{Color.YELLOW}请选择要修改的参数: {Color.RESET}").strip()
+                    if param_choice == '0':
+                        continue
+                        
+                    if param_choice == '1':
+                        threads = int(input(f"{Color.YELLOW}请输入新的线程数 (1-20): {Color.RESET}").strip())
+                        if 1 <= threads <= 20:
+                            config['default_threads'] = threads
+                            save_config(config)
                         else:
                             print(f"{Color.RED}线程数必须在1-20之间{Color.RESET}")
-                except ValueError:
-                    print(f"{Color.RED}线程数输入无效，保持默认值{Color.RESET}")
-                
-                try:
-                    timeout = input(f"{Color.YELLOW}请输入超时时间(秒) (当前: {config['timeout']}): {Color.RESET}").strip()
-                    if timeout:
-                        timeout = int(timeout)
-                        if timeout > 0 and timeout <= 60:
-                            config["timeout"] = timeout
+                            
+                    elif param_choice == '2':
+                        timeout = int(input(f"{Color.YELLOW}请输入新的超时时间(秒) (5-60): {Color.RESET}").strip())
+                        if 5 <= timeout <= 60:
+                            config['timeout'] = timeout
+                            save_config(config)
                         else:
-                            print(f"{Color.RED}超时时间必须在1-60之间{Color.RESET}")
-                except ValueError:
-                    print(f"{Color.RED}超时时间输入无效，保持默认值{Color.RESET}")
-                
-                try:
-                    depth = input(f"{Color.YELLOW}请输入默认扫描深度 (当前: {config['max_depth']}): {Color.RESET}").strip()
-                    if depth:
-                        depth = int(depth)
-                        if depth > 0 and depth <= 5:
-                            config["max_depth"] = depth
+                            print(f"{Color.RED}超时时间必须在5-60秒之间{Color.RESET}")
+                            
+                    elif param_choice == '3':
+                        depth = int(input(f"{Color.YELLOW}请输入新的默认扫描深度 (1-5): {Color.RESET}").strip())
+                        if 1 <= depth <= 5:
+                            config['max_depth'] = depth
+                            save_config(config)
                         else:
                             print(f"{Color.RED}扫描深度必须在1-5之间{Color.RESET}")
-                except ValueError:
-                    print(f"{Color.RED}扫描深度输入无效，保持默认值{Color.RESET}")
-                
-                # 篡改检测参数配置
-                print(f"\n{Color.BOLD}===== 篡改检测参数 ====={Color.RESET}")
-                try:
-                    sensitivity = input(f"{Color.YELLOW}请输入相似度阈值 (0.0-1.0, 当前: {config['tamper_sensitivity']}): {Color.RESET}").strip()
-                    if sensitivity:
-                        sensitivity = float(sensitivity)
-                        if 0.0 <= sensitivity <= 1.0:
-                            config["tamper_sensitivity"] = sensitivity
+                            
+                    elif param_choice == '4':
+                        sensitivity = float(input(f"{Color.YELLOW}请输入新的篡改检测相似度阈值 (0.5-0.95): {Color.RESET}").strip())
+                        if 0.5 <= sensitivity <= 0.95:
+                            config['tamper_sensitivity'] = sensitivity
+                            save_config(config)
                         else:
-                            print(f"{Color.RED}相似度阈值必须在0.0-1.0之间{Color.RESET}")
-                except ValueError:
-                    print(f"{Color.RED}相似度阈值输入无效，保持默认值{Color.RESET}")
-                
-                try:
-                    sig_changes = input(f"{Color.YELLOW}请输入显著变化阈值(字符) (当前: {config['significant_changes']}): {Color.RESET}").strip()
-                    if sig_changes:
-                        sig_changes = int(sig_changes)
-                        if sig_changes > 0 and sig_changes <= 1000:
-                            config["significant_changes"] = sig_changes
+                            print(f"{Color.RED}阈值必须在0.5-0.95之间{Color.RESET}")
+                            
+                    elif param_choice == '5':
+                        changes = int(input(f"{Color.YELLOW}请输入新的显著变化阈值(字符) (10-500): {Color.RESET}").strip())
+                        if 10 <= changes <= 500:
+                            config['significant_changes'] = changes
+                            save_config(config)
                         else:
-                            print(f"{Color.RED}显著变化阈值必须在1-1000之间{Color.RESET}")
+                            print(f"{Color.RED}显著变化阈值必须在10-500字符之间{Color.RESET}")
+                            
+                    else:
+                        print(f"{Color.RED}无效的参数选择{Color.RESET}")
+                        
                 except ValueError:
-                    print(f"{Color.RED}显著变化阈值输入无效，保持默认值{Color.RESET}")
-                
-                save_config(config)
+                    print(f"{Color.RED}请输入有效的数字{Color.RESET}")
             
             elif choice == 6:
                 # 加载自定义规则文件
-                print(f"\n{Color.BOLD}===== 加载自定义规则 ====={Color.RESET}")
-                file_path = input(f"{Color.YELLOW}请输入规则文件路径 (直接回车查看当前规则): {Color.RESET}").strip()
+                print(f"\n{Color.BOLD}===== 加载自定义规则文件 ====={Color.RESET}")
+                print(f"{Color.CYAN}当前加载的规则文件: {', '.join(config['rules_files'])}{Color.RESET}")
                 
-                if file_path and os.path.exists(file_path):
-                    if os.path.basename(file_path) not in config["rules_files"]:
-                        config["rules_files"].append(os.path.basename(file_path))
-                        try:
-                            dest_path = os.path.join(RULES_DIR, os.path.basename(file_path))
-                            shutil.copy2(file_path, dest_path)
-                            save_config(config)
-                            print(f"{Color.GREEN}已添加并加载规则文件: {os.path.basename(file_path)}{Color.RESET}")
-                        except Exception as e:
-                            print(f"{Color.RED}复制规则文件失败: {str(e)}{Color.RESET}")
+                file_path = input(f"{Color.YELLOW}请输入规则文件路径 (空行显示现有文件, 0返回): {Color.RESET}").strip()
+                if file_path == '0':
+                    continue
+                if not file_path:
+                    # 显示现有规则文件
+                    if os.path.exists(RULES_DIR):
+                        print(f"\n{Color.CYAN}规则目录中的文件:{Color.RESET}")
+                        for fname in os.listdir(RULES_DIR):
+                            if fname.endswith('.txt'):
+                                print(f"- {fname}")
                     else:
-                        print(f"{Color.YELLOW}该规则文件已加载{Color.RESET}")
-                else:
-                    print(f"{Color.CYAN}当前加载的规则文件:{Color.RESET}")
-                    for i, fname in enumerate(config["rules_files"], 1):
-                        print(f"{Color.GREEN}{i}. {Color.RESET}{fname}")
+                        print(f"{Color.YELLOW}规则目录不存在{Color.RESET}")
+                    continue
                     
-                    try:
-                        del_choice = input(f"{Color.YELLOW}输入编号删除规则文件 (0跳过): {Color.RESET}").strip()
-                        if del_choice and del_choice != '0':
-                            idx = int(del_choice) - 1
-                            if 0 <= idx < len(config["rules_files"]):
-                                removed = config["rules_files"].pop(idx)
-                                save_config(config)
-                                print(f"{Color.GREEN}已删除规则文件: {removed}{Color.RESET}")
-                    except (ValueError, IndexError):
-                        print(f"{Color.RED}无效的选择{Color.RESET}")
+                if os.path.exists(file_path) and os.path.isfile(file_path):
+                    # 添加新规则文件
+                    if file_path not in config['rules_files']:
+                        config['rules_files'].append(file_path)
+                        save_config(config)
+                        print(f"{Color.GREEN}已添加规则文件: {file_path}{Color.RESET}")
+                    else:
+                        print(f"{Color.YELLOW}规则文件已存在{Color.RESET}")
+                        
+                    # 立即加载规则
+                    load_rules(config)
+                else:
+                    print(f"{Color.RED}规则文件不存在或无法访问{Color.RESET}")
             
             elif choice == 7:
                 # 定时扫描设置
                 setup_scheduled_scan(config)
             
             elif choice == 8:
-                # 配置API密钥
-                print(f"\n{Color.BOLD}===== API密钥配置 ====={Color.RESET}")
-                print(f"{Color.YELLOW}提示: 留空表示不修改当前值{Color.RESET}")
+                # 配置威胁情报API密钥
+                print(f"\n{Color.BOLD}===== 威胁情报API配置 ====={Color.RESET}")
+                print(f"{Color.GREEN}1. {Color.RESET}VirusTotal API")
+                print(f"{Color.GREEN}2. {Color.RESET}微步在线API")
+                print(f"{Color.GREEN}3. {Color.RESET}qiankong API")
+                print(f"{Color.RED}0. {Color.RESET}返回")
                 
-                vt_key = input(f"{Color.YELLOW}VirusTotal API密钥 (当前: {'***' if config['virustotal_api_key'] else '未设置'}): {Color.RESET}").strip()
-                if vt_key:
-                    config["virustotal_api_key"] = vt_key
-                
-                wb_key = input(f"{Color.YELLOW}微步在线API密钥 (当前: {'***' if config['weibu_api_key'] else '未设置'}): {Color.RESET}").strip()
-                if wb_key:
-                    config["weibu_api_key"] = wb_key
-                
-                qk_key = input(f"{Color.YELLOW}奇安信API密钥 (当前: {'***' if config['qiankong_api_key'] else '未设置'}): {Color.RESET}").strip()
-                if qk_key:
-                    config["qiankong_api_key"] = qk_key
-                
-                save_config(config)
+                try:
+                    api_choice = input(f"{Color.YELLOW}请选择要配置的API: {Color.RESET}").strip()
+                    if api_choice == '0':
+                        continue
+                        
+                    if api_choice == '1':
+                        current = config['virustotal_api_key'] or "未设置"
+                        print(f"{Color.CYAN}当前VirusTotal API密钥: {current}{Color.RESET}")
+                        new_key = input(f"{Color.YELLOW}请输入新的API密钥 (空行保留当前): {Color.RESET}").strip()
+                        if new_key:
+                            config['virustotal_api_key'] = new_key
+                            save_config(config)
+                            
+                    elif api_choice == '2':
+                        current = config['weibu_api_key'] or "未设置"
+                        print(f"{Color.CYAN}当前微步在线API密钥: {current}{Color.RESET}")
+                        new_key = input(f"{Color.YELLOW}请输入新的API密钥 (空行保留当前): {Color.RESET}").strip()
+                        if new_key:
+                            config['weibu_api_key'] = new_key
+                            save_config(config)
+                            
+                    elif api_choice == '3':
+                        current = config['qiankong_api_key'] or "未设置"
+                        print(f"{Color.CYAN}当前qiankong API密钥: {current}{Color.RESET}")
+                        new_key = input(f"{Color.YELLOW}请输入新的API密钥 (空行保留当前): {Color.RESET}").strip()
+                        if new_key:
+                            config['qiankong_api_key'] = new_key
+                            save_config(config)
+                            
+                    else:
+                        print(f"{Color.RED}无效的API选择{Color.RESET}")
+                        
+                except Exception as e:
+                    print(f"{Color.RED}配置API密钥失败: {str(e)}{Color.RESET}")
             
             elif choice == 9:
                 # 查看扫描历史
                 view_scan_history()
+                print(f"{Color.GREEN}配置已更新{Color.RESET}")
+
         except Exception as e:
-            print(f"{Color.RED}菜单操作出错: {str(e)}{Color.RESET}")
-            continue
+            print(f"{Color.RED}配置参数时发生错误: {str(e)}{Color.RESET}")
+
+    # 确保所有代码块正确缩进和闭合
+        except Exception as e:
+         print(f"{Color.RED}程序运行出错: {str(e)}{Color.RESET}")
+        # 提供友好的错误恢复选项
+        try:
+            choice = input(f"{Color.YELLOW}是否重新启动程序? (y/n): {Color.RESET}").strip().lower()
+            if choice == 'y':
+                print(f"{Color.CYAN}正在重启程序...{Color.RESET}")
+                main()
+            else:
+                print(f"{Color.GREEN}程序将退出{Color.RESET}")
+        except:
+            print(f"{Color.GREEN}程序将退出{Color.RESET}")
 
 if __name__ == "__main__":
     try:
         main()
-    except KeyboardInterrupt:
-        print(f"\n{Color.GREEN}用户中断，程序退出{Color.RESET}")
     except Exception as e:
-        print(f"\n{Color.RED}程序出错: {str(e)}{Color.RESET}")
-        try:
-            # 无论结果如何都保存
-            if global_state.get("results") is not None:
-                save_path = save_scan_results(global_state["results"], "error_recovery")
-                print(f"{Color.YELLOW}错误恢复: 已保存扫描结果至 {save_path}{Color.RESET}")
-        except:
-            print(f"{Color.RED}错误恢复: 保存扫描结果失败{Color.RESET}")
-            
-        try:
-            # 无论结果如何都保存
-            if global_state.get("tamper_results") is not None:
-                tamper_save_path = save_tamper_results(global_state["tamper_results"], "error_recovery_tamper")
-                print(f"{Color.YELLOW}错误恢复: 已保存篡改检测结果至 {tamper_save_path}{Color.RESET}")
-        except:
-            print(f"{Color.RED}错误恢复: 保存篡改检测结果失败{Color.RESET}")
-    os._exit(0)
+        print(f"{Color.RED}程序发生致命错误: {str(e)}{Color.RESET}")
+        sys.exit(1)
